@@ -1,42 +1,88 @@
-import psycopg2
-from psycopg2 import sql
+import pytest
+import httpx
 
-db_params = {
-    'dbname': 'your_database_name',
-    'user': 'your_username',
-    'password': 'your_password',
-    'host': 'your_host',
-    'port': 'your_port'
-}
+API_URL = "http://localhost:3333"
 
-def execute_query(query):
-    connection = psycopg2.connect(**db_params)
-    cursor = connection.cursor()
-    cursor.execute(query)
-    results = cursor.fetchall()
-    connection.close()
-    return results
 
-def create_test_report(query_number, query_description, query_results, errors_warnings, recommendations):
-    with open('test_report.txt', 'a') as report_file:
-        report_file.write(f'\nЗапрос {query_number}:\n')
-        report_file.write(f'- Описание: {query_description}\n')
-        report_file.write(f'- Результаты: {query_results}\n')
-        report_file.write(f'- Обнаруженные ошибки или предупреждения: {errors_warnings}\n')
-        report_file.write(f'- Рекомендации: {recommendations}\n')
+@pytest.fixture
+async def client():
+    async with httpx.AsyncClient() as client:
+        yield client
 
-if __name__ == "__main__":
-    open('test_report.txt', 'w').close()
 
-    query_1 = """
-    -- ваш SQL-запрос 1
-    """
-    results_1 = execute_query(query_1)
-    create_test_report(1, 'Выбрать всех клиентов, сделавших заказы в текущем месяце, и отсортировать их по убыванию общей суммы заказов.', results_1, 'Нет ошибок', 'Нет рекомендаций')
+@pytest.fixture
+async def registered_user(client):
+    data = {
+        "username": "testuser",
+        "password": "testpass",
+        "email": "testuser@example.com",
+        "name": "Test User"
+    }
 
-    query_2 = """
-    -- ваш SQL-запрос 2
-    """
-    results_2 = execute_query(query_2)
-    create_test_report(2, 'Выбрать все продукты, имеющие цену выше средней по категории, и отсортировать их по возрастанию цены.', results_2, 'Нет ошибок', 'Нет рекомендаций')
+    response = await client.post(API_URL + "/register", json=data)
+    assert response.status_code == 201
 
+    return data
+
+
+@pytest.mark.asyncio
+async def test_register(client, registered_user):
+    assert "username" in registered_user
+
+    data = {
+        "username": registered_user["username"],
+        "password": registered_user["password"]
+    }
+
+    response = await client.post(API_URL + "/login", json=data)
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_get_profile(client, registered_user):
+    data = {
+        "username": registered_user["username"],
+        "password": registered_user["password"]
+    }
+
+    response = await client.post(API_URL + "/login", json=data)
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+    token = response.json()["access_token"]
+
+    response = await client.get(API_URL + "/profile", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "username": registered_user["username"],
+        "email": registered_user["email"],
+        "name": registered_user["name"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_profile(client, registered_user):
+    data = {
+        "username": registered_user["username"],
+        "password": registered_user["password"]
+    }
+
+    response = await client.post(API_URL + "/login", json=data)
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+    token = response.json()["access_token"]
+
+    updated_data = {
+        "email": "updated@example.com",
+        "name": "Updated User"
+    }
+
+    response = await client.put(API_URL + "/profile", headers={"Authorization": f"Bearer {token}"}, json=updated_data)
+    assert response.status_code == 200
+    assert response.json() == {
+        "username": registered_user["username"],
+        "email": updated_data["email"],
+        "name": updated_data["name"]
+    }
